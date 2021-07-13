@@ -13,16 +13,20 @@
 #define RESET "\x1B[0m"
 
 // Chip constants
-#define MEM_SIZE        0x2000
-#define PROGRAM_START   0x0000 // is 0x0200 usually
-#define STACK_SIZE      0x10
-#define NB_REG          0x10
-#define FLAGS           (NB_REG - 1)
+#define MEM_SIZE        0x1000
 
-#define VIDEO_START     0x1E00
+#define VIDEO_START     0x0F00
 #define VIDEO_SIZE      (MEM_SIZE - VIDEO_START)
 #define VIDEO_WIDTH     0x10
 #define VIDEO_HEIGHT    (VIDEO_SIZE / VIDEO_WIDTH)
+
+#define PROGRAM_START   0x0200 // is 0x0200 usually
+#define PROGRAM_END     (VIDEO_START)
+#define PROGRAM_SIZE    (PROGRAM_END - PROGRAM_START)
+
+#define STACK_SIZE      0x10
+#define NB_REG          0x10
+#define FLAGS_REG       (NB_REG - 1)
 
 typedef uint8_t byte;
 typedef uint16_t word;
@@ -112,13 +116,13 @@ void fill_screen(chip *c, byte value)
 
 void print_mem(chip *c)
 {
-    for(unsigned int i = 0; i < MEM_SIZE; i++)
+    for(unsigned int i = 0; i < MEM_SIZE; i += 2)
     {
         if(i == PROGRAM_START)
             printf(RED "\nPROGRAM START\n" RESET);
         if(i == VIDEO_START)
             printf(GRN "\nVIDEO START\n" RESET);
-        printf("%02X ", c->mem[i]);
+        printf("%02X%02X ", c->mem[i], c->mem[i + 1]);
     }
     printf("\n");
 }
@@ -202,7 +206,7 @@ void SNE(chip *c, word instruction)
 
 void LD(chip *c, word instruction)
 {
-    c->reg[first_reg(instruction)] == first_byte(instruction);
+    c->reg[first_reg(instruction)] = first_byte(instruction);
 }
 
 void ADDI(chip *c, word instruction)
@@ -231,45 +235,45 @@ void ALU(chip *c, word instruction)
             c->reg[regx] ^= c->reg[regy];
             break;
         case 4: ;
-            byte result = c->reg[regx]
-                + c->reg[regy];
-            if(result > 255)
-                c->reg[FLAGS] = 1;
-            else
-                c->reg[FLAGS] = 0;
-            c->reg[regx] = result;
-            break;
+                byte result = c->reg[regx]
+                    + c->reg[regy];
+                if(result > 255)
+                    c->reg[FLAGS_REG] = 1;
+                else
+                    c->reg[FLAGS_REG] = 0;
+                c->reg[regx] = result;
+                break;
         case 5:
-            if(c->reg[regx] > c->reg[regy])
-                c->reg[FLAGS] = 1;
-            else
-                c->reg[FLAGS] = 0;
-            c->reg[regx] = c->reg[regx] - c->reg[regy];
-            break;
+                if(c->reg[regx] > c->reg[regy])
+                    c->reg[FLAGS_REG] = 1;
+                else
+                    c->reg[FLAGS_REG] = 0;
+                c->reg[regx] = c->reg[regx] - c->reg[regy];
+                break;
         case 6:
-            if( (c->reg[regx] & 0x0001) == 1)
-                c->reg[FLAGS] = 1;
-            else
-                c->reg[FLAGS] = 0;
-            c->reg[regx] >>= 1;
-            break;
+                if( (c->reg[regx] & 0x0001) == 1)
+                    c->reg[FLAGS_REG] = 1;
+                else
+                    c->reg[FLAGS_REG] = 0;
+                c->reg[regx] >>= 1;
+                break;
         case 7:
-            if(c->reg[regx] < c->reg[regy])
-                c->reg[FLAGS] = 1;
-            else
-                c->reg[FLAGS] = 0;
-            c->reg[regx] = c->reg[regy] - c->reg[regx];
-            break;
+                if(c->reg[regx] < c->reg[regy])
+                    c->reg[FLAGS_REG] = 1;
+                else
+                    c->reg[FLAGS_REG] = 0;
+                c->reg[regx] = c->reg[regy] - c->reg[regx];
+                break;
         case 14:
-            if( (c->reg[regx] >> 7) == 1)
-                c->reg[FLAGS] = 1;
-            else
-                c->reg[FLAGS] = 0;
-            c->reg[regx] <<= 1;
-            break;
+                if( (c->reg[regx] >> 7) == 1)
+                    c->reg[FLAGS_REG] = 1;
+                else
+                    c->reg[FLAGS_REG] = 0;
+                c->reg[regx] <<= 1;
+                break;
         default:
-            errx(EXIT_FAILURE, "Instruction not parsed %X at pc : %X",
-                    instruction, c->pc);
+                errx(EXIT_FAILURE, "Instruction not parsed %X at pc : %X",
+                        instruction, c->pc);
     }
 }
 
@@ -335,6 +339,7 @@ void execute_instruction(chip *c) // instruction is located under pc
     word instruction = read_word(c);
     byte first_four_bits = instruction>>12;
 
+    printf("instruction %d, first_letter %d\n", instruction, first_four_bits);
     switch(first_four_bits)
     {
         case 0:
@@ -410,12 +415,17 @@ default_label:
     }
 }
 
-void load_program(chip *c, char *program)
+void load_program(chip *c)
 {
-    unsigned int i = 0;
-    while(program[i] != '\0')
+    word program[PROGRAM_SIZE / 2] = {0x7001, 0x1200};
+
+    int j = 0;
+    for(int i = PROGRAM_START; i < PROGRAM_END; i++)
     {
-        i ++;
+        c->mem[i] = (byte)(program[j] >> 8);
+        i++;
+        c->mem[i] = (byte)(program[j] & 0x00FF);
+        j++;
     }
 }
 
@@ -424,7 +434,7 @@ int main(void)
     srand(time(NULL));
 
     chip c = {
-        .mem = {0},
+        .mem = {0x12, 0x00}, // JP to PROGRAM_START
         .pc = PROGRAM_START,
         .sp = 0x00,
         .stack = {0},
@@ -432,9 +442,17 @@ int main(void)
         .reg = {0}
     };
 
-    print_chip(&c);
-    execute_instruction(&c);
-    print_chip(&c);
-    // printf("VIDEO_WIDTH : %d, VIDEO_HEIGHT : %d\n", VIDEO_WIDTH, VIDEO_HEIGHT);
+    load_program(&c);
+
+    int cpu_cycles = 50;
+    while(cpu_cycles >= 0)
+    {
+        print_chip(&c);
+        // print_mem(&c);
+        // print_screen(&c);
+        execute_instruction(&c);
+        cpu_cycles--;
+    }
+
     return 0;
 }
